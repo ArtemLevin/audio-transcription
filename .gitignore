@@ -157,7 +157,7 @@ Thumbs.db
 # Whisper / transcriptions
 *transcript/
 *_transcript/
-*.txt
+
 *.srt
 
 # Temp files
