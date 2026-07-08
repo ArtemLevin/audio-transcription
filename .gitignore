@@ -154,10 +154,6 @@ Thumbs.db
 *.aac
 *.wma
 
-# Whisper / transcriptions
-*transcript/
-*_transcript/
-
 *.srt
 
 # Temp files

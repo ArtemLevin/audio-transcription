@@ -1,112 +1,114 @@
 Audio Lesson Transcriber Faster
-Скрипт для транскрибации учебных аудиозаписей через `faster-whisper` с последующей очисткой текста, разбиением на чанки для LLM и опциональной методической обработкой через локальную Ollama-модель.
-Основной сценарий: запись занятия по математике, физике или химии → сырой транскрипт → очищенный транскрипт → prompt/чанки для создания учебного протокола, пособия или анализа ошибок ученика.
+Скрипт для обработки аудиозаписей учебных занятий:
+```text
+аудиофайл
+  → транскрипт через faster-whisper
+  → очищенный транскрипт
+  → смысловая версия для будущего пособия
+  → чанки для LLM
+  → опциональный учебный протокол через Ollama
+```
+Скрипт ориентирован на русскоязычные занятия по математике, физике и химии. Основной сценарий: получить качественную основу для последующей генерации LaTeX-пособия и web-версии пособия.
 ---
 1. Что умеет скрипт
-   Обрабатывает аудиофайлы из указанной папки.
-   Поддерживает форматы: `.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`, `.aac`, `.wma`.
-   Работает через `faster-whisper`, а не через `openai-whisper`.
-   Оптимизирован для CPU-режима:
-   `device=cpu`;
-   `compute_type=int8`;
-   настраиваемое число CPU-потоков.
-   Может читать исходный аудиофайл напрямую без предварительного WAV через `ffmpeg`.
-   Может предварительно готовить аудио через `ffmpeg`:
-   без фильтров;
-   с базовым `highpass/lowpass`;
-   с `loudnorm`.
-   Использует VAD-фильтр для пропуска тишины.
-   Сохраняет:
-   сырой текст;
-   текст с таймкодами;
-   SRT-субтитры;
-   JSON сегментов;
-   очищенный текст;
-   чанки для LLM;
-   prompt-файл для дальнейшей обработки;
-   отчёт об очистке;
-   manifest с настройками и временем выполнения.
-   Опционально запускает Ollama для методической обработки чанков.
+   Ищет аудиофайлы в указанной папке.
+   Распознаёт речь через `faster-whisper`.
+   Работает на CPU, включая ноутбуки без NVIDIA-видеокарты.
+   Поддерживает быстрый CPU-профиль `int8`.
+   Может предварительно готовить аудио через `ffmpeg`.
+   Может передавать исходный файл напрямую в `faster-whisper` через `--skip-audio-prepare`.
+   Сохраняет сырой транскрипт, таймкоды, SRT и JSON-сегменты.
+   Очищает технический мусор, повторы и субтитровые артефакты.
+   Выделяет важные сигналы ученика: «не понимаю», «почему», «не сходится» и похожие фразы.
+   Создаёт смысловую версию транскрипта для будущего пособия.
+   Делит текст на чанки для LLM.
+   Генерирует готовый prompt-файл для ручной или автоматической LLM-обработки.
+   Опционально запускает локальную LLM через Ollama.
+   Сохраняет manifest и отчёты по обработке.
 ---
-2. Требования
-   Python
-   Рекомендуется Python 3.10+.
-   Проверка версии:
-```bash
-python --version
+2. Рекомендуемая конфигурация для вашего ноутбука
+   Для ноутбука с Intel Core i9-12900HK и 32 ГБ RAM:
+```text
+Whisper model: small
+Device: cpu
+Compute type: int8
+Beam size: 1
+VAD: включён
+Content filter: medium
 ```
-Основные Python-зависимости
-```bash
+Быстрый рабочий запуск:
+```powershell
+python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
+  --model small `
+  --device cpu `
+  --compute-type int8 `
+  --beam-size 1 `
+  --skip-audio-prepare `
+  --clean-mode balanced `
+  --content-filter-mode medium
+```
+---
+3. Установка
+   3.1. Создать виртуальное окружение
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+Если PowerShell запрещает запуск скриптов:
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+После этого заново активируйте окружение:
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+3.2. Установить зависимости
+```powershell
+pip install -U pip
 pip install faster-whisper
 ```
-Дополнительный `openai-whisper` для этого скрипта не нужен.
-FFmpeg
-`ffmpeg` нужен только если вы не используете `--skip-audio-prepare`.
-При запуске с `--skip-audio-prepare` скрипт отдаёт исходный аудиофайл напрямую в `faster-whisper`. В этом режиме `ffmpeg` обычно не требуется для самой транскрибации, но `ffprobe` полезен для определения длительности файла до обработки.
-Проверка:
-```bash
+Для Ollama-этапа дополнительные Python-зависимости обычно не нужны: скрипт обращается к Ollama через HTTP API стандартными средствами Python.
+3.3. Установить ffmpeg
+`ffmpeg` нужен для подготовки WAV, определения длительности и обработки аудио через фильтры.
+На Windows удобно установить через `winget`:
+```powershell
+winget install Gyan.FFmpeg
+```
+Проверьте:
+```powershell
 ffmpeg -version
 ffprobe -version
 ```
+При запуске с `--skip-audio-prepare` скрипт передаёт исходный файл напрямую в `faster-whisper`. В этом режиме `ffmpeg` всё равно используется для определения длительности файла через `ffprobe`.
 ---
-3. Быстрый старт
-   Положите аудиофайлы в отдельную папку, например:
+4. Минимальный requirements.txt
 ```text
-C:\audio_lessons
+faster-whisper
 ```
-Запуск быстрого CPU-профиля:
-```powershell
-python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
-  --model small `
-  --device cpu `
-  --compute-type int8 `
-  --beam-size 1 `
-  --skip-audio-prepare
+При желании можно зафиксировать версию:
+```text
+faster-whisper>=1.0.0
 ```
-Это рекомендуемый стартовый вариант для ноутбука без NVIDIA-видеокарты.
 ---
-4. Рекомендуемые профили запуска
-   4.1. Максимально быстрый CPU-профиль
+5. Быстрый запуск
+   Папка должна содержать один или несколько аудиофайлов:
+```text
+C:\audio_lessons\
+  lesson_01.mp3
+  lesson_02.m4a
+```
+Команда:
 ```powershell
 python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
   --model small `
   --device cpu `
   --compute-type int8 `
   --beam-size 1 `
-  --skip-audio-prepare
+  --skip-audio-prepare `
+  --clean-mode balanced `
+  --content-filter-mode medium
 ```
-Подходит для первичной транскрибации занятий, когда скорость важнее идеальной точности.
-4.2. Более точный CPU-профиль
-```powershell
-python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
-  --model medium `
-  --device cpu `
-  --compute-type int8 `
-  --beam-size 2 `
-  --skip-audio-prepare
-```
-Подходит для сложных записей, где много формул, терминов, неразборчивой речи или шума. Будет заметно медленнее, чем `small`.
-4.3. Профиль с предварительной обработкой аудио через FFmpeg
-```powershell
-python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
-  --model small `
-  --device cpu `
-  --compute-type int8 `
-  --beam-size 1 `
-  --audio-filter basic
-```
-В этом режиме создаётся временный WAV 16 kHz mono. Фильтр `basic` применяет `highpass=f=80,lowpass=f=7600`.
-4.4. Профиль с нормализацией громкости
-```powershell
-python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
-  --model small `
-  --device cpu `
-  --compute-type int8 `
-  --beam-size 1 `
-  --audio-filter loudnorm
-```
-Этот режим может помочь при очень неровной громкости, но он медленнее.
-4.5. Обработка вложенных папок
+Рекурсивный поиск по вложенным папкам:
 ```powershell
 python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
   --recursive `
@@ -117,14 +119,8 @@ python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
   --skip-audio-prepare
 ```
 ---
-5. Запуск с Ollama
-   Ollama-этап нужен, если после транскрибации вы хотите автоматически получить методический протокол занятия.
-   Перед запуском убедитесь, что Ollama работает и нужная модель скачана:
-```bash
-ollama list
-ollama pull qwen2.5:7b
-```
-Быстрый вариант без финальной сборки общего протокола:
+6. Режимы качества и скорости
+   6.1. Самый быстрый CPU-профиль
 ```powershell
 python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
   --model small `
@@ -132,432 +128,280 @@ python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
   --compute-type int8 `
   --beam-size 1 `
   --skip-audio-prepare `
-  --ollama `
-  --ollama-model qwen2.5:7b `
-  --no-ollama-final-synthesis `
-  --ollama-num-predict 1200 `
-  --chunk-size 8000 `
-  --chunk-overlap 150
+  --content-filter-mode medium
 ```
-Более полный вариант с финальной сборкой общего протокола:
+6.2. Более аккуратный CPU-профиль
 ```powershell
 python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
   --model small `
   --device cpu `
   --compute-type int8 `
-  --beam-size 1 `
-  --skip-audio-prepare `
-  --ollama `
-  --ollama-model qwen2.5:7b
+  --beam-size 2 `
+  --content-filter-mode medium
 ```
-Финальная сборка может быть долгой и может не выполниться, если итоговый prompt окажется больше лимита `--ollama-final-max-chars`.
----
-6. Структура результата
-   Для каждого файла создаётся папка рядом с исходным аудио:
-```text
-<имя_аудиофайла>_lesson_transcript/
-```
-Пример:
-```text
-lesson_01.mp3
-lesson_01_lesson_transcript/
-```
-Внутри папки результата:
-```text
-00_raw_whisper.txt
-00_raw_timestamped.txt
-00_raw_segments.srt
-00_raw_segments.json
-01_normalized.txt
-02_clean_balanced.txt
-03_llm_chunks/
-04_llm_prompt.md
-important_student_signals.json
-cleaning_report.md
-manifest.json
-```
-Если включена Ollama:
-```text
-05_ollama_chunk_protocols/
-06_ollama_final_protocol.md
-06_ollama_final_prompt.md
-06_ollama_final_response.json
-ollama_report.json
-```
-Если итоговая сборка отключена через `--no-ollama-final-synthesis`, файла `06_ollama_final_protocol.md` может не быть.
----
-7. Основные выходные файлы
-   `00_raw_whisper.txt`
-   Сырой текст, полученный от `faster-whisper`.
-   `00_raw_timestamped.txt`
-   Сегменты с таймкодами в человекочитаемом виде.
-   `00_raw_segments.srt`
-   SRT-файл субтитров.
-   `00_raw_segments.json`
-   JSON со списком сегментов:
-   начало;
-   конец;
-   текст;
-   `avg_logprob`;
-   `no_speech_prob`;
-   `compression_ratio`.
-   `01_normalized.txt`
-   Нормализованный текст: исправлены пробелы, переносы, базовая пунктуационная структура.
-   `02_clean_<mode>.txt`
-   Очищенный текст после выбранного режима очистки:
-   `conservative`;
-   `balanced`;
-   `aggressive`.
-   `03_llm_chunks/`
-   Папка с чанками очищенного транскрипта для дальнейшей LLM-обработки.
-   `04_llm_prompt.md`
-   Готовый prompt для ручной или автоматической обработки транскрипта через LLM.
-   `cleaning_report.md`
-   Отчёт об очистке:
-   размер сырого текста;
-   размер очищенного текста;
-   количество чанков;
-   найденные сигналы затруднений ученика;
-   рекомендации, что делать дальше.
-   `manifest.json`
-   Технический манифест обработки:
-   исходный файл;
-   длительность;
-   настройки `faster-whisper`;
-   настройки предобработки;
-   настройки Ollama;
-   время выполнения этапов;
-   пути к результатам.
----
-8. Важные параметры faster-whisper
-   `--model`
-   Модель распознавания.
-   Примеры:
-```text
-tiny
-base
-small
-medium
-large-v3
-large-v3-turbo
-turbo
-```
-Рекомендация для CPU-ноутбука:
-`small` — основной рабочий вариант;
-`medium` — если нужно качество выше и можно ждать;
-`base` — если нужна максимальная скорость;
-`large-v3` — обычно слишком тяжело для CPU-сценария.
-`--device`
-```text
-cpu
-cuda
-auto
-```
-Для ноутбука без NVIDIA:
+6.3. Качественнее, заметно медленнее
 ```powershell
---device cpu
-```
-`--compute-type`
-Для CPU рекомендуется:
-```powershell
---compute-type int8
-```
-Для CUDA обычно используют:
-```powershell
---compute-type float16
-```
-или:
-```powershell
---compute-type int8_float16
-```
-`--cpu-threads`
-Количество CPU-потоков для `faster-whisper`.
-По умолчанию скрипт берёт число логических ядер минус 1.
-Пример ручной настройки:
-```powershell
---cpu-threads 8
-```
-Если ноутбук начинает сильно греться или тормозить, уменьшите значение:
-```powershell
---cpu-threads 4
-```
-`--num-workers`
-Количество worker'ов `faster-whisper`.
-Для последовательной обработки файлов обычно оставляйте:
-```powershell
---num-workers 1
-```
-`--beam-size`
-Ширина beam search.
-`1` — быстрее;
-`2` — разумный компромисс;
-`5` — потенциально точнее, но медленнее.
-Рекомендация:
-```powershell
---beam-size 1
-```
-или:
-```powershell
---beam-size 2
-```
----
-9. VAD-фильтр
-   По умолчанию VAD включён:
-```powershell
---vad-filter
-```
-Он помогает пропускать тишину и длинные участки без речи.
-Отключение:
-```powershell
---no-vad-filter
-```
-Настройки:
-```powershell
---vad-min-silence-duration-ms 1000
---vad-speech-pad-ms 300
-```
-Если VAD «съедает» начало или конец реплик, увеличьте отступ:
-```powershell
---vad-speech-pad-ms 500
-```
-Если в аудио много пауз и хочется агрессивнее вырезать тишину:
-```powershell
---vad-min-silence-duration-ms 500
-```
----
-10. Предварительная подготовка аудио
-    Быстрый режим без подготовки
-```powershell
---skip-audio-prepare
-```
-Скрипт отдаёт исходный файл напрямую в `faster-whisper`.
-Плюсы:
-быстрее;
-не нужен временный WAV;
-проще пайплайн.
-Минусы:
-не применяются аудиофильтры;
-при проблемных файлах может быть полезнее подготовка через `ffmpeg`.
-Подготовка через FFmpeg
-Не указывайте `--skip-audio-prepare`.
-Тогда скрипт создаст временный WAV:
-```text
-16 kHz, mono, pcm_s16le
-```
-Фильтры:
-```powershell
---audio-filter none
---audio-filter basic
---audio-filter loudnorm
-```
-Рекомендации:
-`none` — быстрее всего среди ffmpeg-режимов;
-`basic` — рабочий компромисс;
-`loudnorm` — для неровной громкости, но медленнее.
----
-11. Режимы очистки текста
-    `conservative`
-    Бережная очистка.
-    Используйте, если важно ничего не потерять:
-```powershell
---clean-mode conservative
-```
-`balanced`
-Рабочий режим по умолчанию:
-```powershell
---clean-mode balanced
-```
-`aggressive`
-Сильная очистка:
-```powershell
---clean-mode aggressive
-```
-Подходит, если в транскрипте много мусора, но есть риск удалить короткие педагогически значимые реплики вроде «да», «нет», «хорошо».
----
-12. Чанки для LLM
-    Параметры:
-```powershell
---chunk-size 6000
---chunk-overlap 500
-```
-Для ускорения Ollama-этапа можно увеличить размер чанка и уменьшить перекрытие:
-```powershell
---chunk-size 8000 `
---chunk-overlap 150
-```
-Для более аккуратной обработки:
-```powershell
---chunk-size 5000 `
---chunk-overlap 500
-```
----
-13. Initial prompt
-    По умолчанию используется подсказка для русскоязычных учебных занятий с терминами по математике, физике и химии.
-    Отключить её можно так:
-```powershell
---initial-prompt ""
-```
-Задать свою:
-```powershell
---initial-prompt "Это занятие по стереометрии ЕГЭ. Часто встречаются слова: пирамида, призма, сечение, перпендикуляр, угол, расстояние."
-```
----
-14. `condition_on_previous_text`
-    По умолчанию выключено.
-    Включение:
-```powershell
---condition-on-previous-text
-```
-Иногда это улучшает связность текста, но может усиливать повторы и ложные продолжения. Для длинных учебных записей обычно лучше начинать без этого флага.
----
-15. Подробный лог
-```powershell
---verbose
-```
-В подробном режиме будет больше информации о командах, этапах обработки и работе `faster-whisper`.
----
-16. Примеры полных команд
-    Один рабочий быстрый запуск
-```powershell
-python audio_lesson_transcriber_faster.py "C:\Users\Artem\Lessons\audio" `
-  --model small `
-  --device cpu `
-  --compute-type int8 `
-  --beam-size 1 `
-  --skip-audio-prepare `
-  --clean-mode balanced
-```
-Запуск с сохранением подготовленного WAV
-```powershell
-python audio_lesson_transcriber_faster.py "C:\Users\Artem\Lessons\audio" `
-  --model small `
-  --device cpu `
-  --compute-type int8 `
-  --beam-size 1 `
-  --audio-filter basic `
-  --keep-prepared-wav
-```
-Флаг `--keep-prepared-wav` работает только если не указан `--skip-audio-prepare`.
-Запуск для сложной записи
-```powershell
-python audio_lesson_transcriber_faster.py "C:\Users\Artem\Lessons\audio" `
+python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
   --model medium `
   --device cpu `
   --compute-type int8 `
   --beam-size 2 `
-  --audio-filter basic `
-  --clean-mode conservative
+  --content-filter-mode medium
 ```
-Запуск с Ollama и быстрым протоколированием чанков
+6.4. Мягкая нагрузка на ноутбук
+Если ноутбук перегревается или хочется параллельно работать:
 ```powershell
-python audio_lesson_transcriber_faster.py "C:\Users\Artem\Lessons\audio" `
+python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
+  --model small `
+  --device cpu `
+  --compute-type int8 `
+  --cpu-threads 10 `
+  --beam-size 1 `
+  --skip-audio-prepare
+```
+Для максимальной скорости на вашем CPU можно оставить автоматическое значение: число логических ядер минус 1.
+---
+7. Смысловая фильтрация для будущего пособия
+   Скрипт создаёт две важные версии текста:
+```text
+02_clean_balanced.txt
+03_content_only_medium.txt
+```
+Назначение файлов:
+Файл	Назначение
+`02_clean_balanced.txt`	Полный очищенный транскрипт для проверки человеком
+`03_content_only_medium.txt`	Смысловая версия для LLM и будущего пособия
+Смысловая фильтрация удаляет организационные и малозначимые фразы:
+```text
+Здравствуйте.
+Меня слышно?
+Сейчас я всё подключу.
+Видно экран?
+Секундочку.
+Окей.
+Хорошо.
+Ага.
+Угу.
+```
+При этом скрипт старается сохранять педагогически значимые фрагменты:
+```text
+не понимаю
+почему
+у меня другой ответ
+не сходится
+можно ещё раз
+задача
+условие
+решение
+формула
+логарифм
+производная
+уравнение
+неравенство
+```
+7.1. Режимы `--content-filter-mode`
+```text
+off         — смысловая фильтрация выключена
+safe        — удаляются самые очевидные служебные фразы
+medium      — рабочий режим для подготовки пособий
+aggressive  — сильное сокращение текста для очень длинных занятий
+```
+Рекомендуемый режим:
+```powershell
+--content-filter-mode medium
+```
+Бережный режим:
+```powershell
+--content-filter-mode safe
+```
+Жёсткий режим:
+```powershell
+--content-filter-mode aggressive
+```
+Для финальных учебных материалов желательно сверять спорные места с `02_clean_balanced.txt`.
+---
+8. Очистка транскрипта
+   Параметр:
+```powershell
+--clean-mode conservative|balanced|aggressive
+```
+Режимы:
+Режим	Назначение
+`conservative`	Бережная очистка, сохраняет максимум текста
+
+`balanced`	Рабочий режим по умолчанию
+`aggressive`	Сильная очистка повторов и коротких вводных фраз
+Рекомендуемая связка:
+```powershell
+--clean-mode balanced --content-filter-mode medium
+```
+---
+9. Структура выходной папки
+   Для файла:
+```text
+lesson_01.mp3
+```
+создаётся папка:
+```text
+lesson_01_lesson_transcript/
+```
+Пример содержимого:
+```text
+lesson_01_lesson_transcript/
+  00_raw_whisper.txt
+  00_raw_timestamped.txt
+  00_raw_segments.srt
+  00_raw_segments.json
+
+  01_normalized.txt
+  02_clean_balanced.txt
+  03_content_only_medium.txt
+
+  03_llm_chunks/
+    chunk_001.txt
+    chunk_002.txt
+    chunk_003.txt
+
+  04_llm_prompt.md
+  important_student_signals.json
+  cleaning_report.md
+  manifest.json
+
+  05_ollama_chunk_protocols/
+    chunk_001_protocol.md
+    chunk_001_ollama_response.json
+    chunk_002_protocol.md
+    chunk_002_ollama_response.json
+
+  06_ollama_final_protocol.md
+  06_ollama_final_prompt.md
+  06_ollama_final_response.json
+  ollama_report.json
+```
+Файлы Ollama появляются только при запуске с `--ollama`.
+---
+10. Какой файл использовать дальше
+    Для будущего конвейера:
+```text
+аудио → транскрипт → LaTeX-пособие → web-пособие
+```
+лучше использовать такую схему:
+```text
+00_raw_whisper.txt
+  → 02_clean_balanced.txt
+  → 03_content_only_medium.txt
+  → 03_llm_chunks/
+  → учебный протокол
+  → lesson_spec.json
+  → LaTeX + web
+```
+Рекомендуемые файлы:
+Задача	Файл
+Проверка исходного смысла	`02_clean_balanced.txt`
+Передача в LLM	`03_content_only_medium.txt` или `03_llm_chunks/`
+Создание prompt вручную	`04_llm_prompt.md`
+Поиск затруднений ученика	`important_student_signals.json`
+Диагностика запуска	`manifest.json` и `cleaning_report.md`
+---
+11. Использование Ollama
+    Ollama позволяет локально обработать смысловые чанки и получить учебный протокол занятия.
+    11.1. Установка Ollama
+    Установите Ollama с официального сайта, затем откройте новый PowerShell и проверьте:
+```powershell
+ollama --version
+```
+Проверка локального API:
+```powershell
+curl http://localhost:11434/api/tags
+```
+11.2. Рекомендуемые модели
+Для CPU-ноутбука с 32 ГБ RAM:
+```powershell
+ollama pull qwen2.5:7b
+```
+Альтернатива:
+```powershell
+ollama pull qwen3:8b
+```
+Для стабильного рабочего пайплайна начните с `qwen2.5:7b`.
+11.3. Запуск скрипта с Ollama
+```powershell
+python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
   --model small `
   --device cpu `
   --compute-type int8 `
   --beam-size 1 `
   --skip-audio-prepare `
+  --clean-mode balanced `
+  --content-filter-mode medium `
   --ollama `
   --ollama-model qwen2.5:7b `
   --no-ollama-final-synthesis `
+  --ollama-num-ctx 8192 `
   --ollama-num-predict 1200 `
+  --chunk-size 7000 `
+  --chunk-overlap 150
+```
+Для первой проверки лучше использовать `--no-ollama-final-synthesis`. Так скрипт создаст протоколы отдельных чанков и пропустит тяжёлую финальную сборку.
+11.4. Запуск с итоговым протоколом
+```powershell
+python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
+  --model small `
+  --device cpu `
+  --compute-type int8 `
+  --beam-size 1 `
+  --skip-audio-prepare `
+  --clean-mode balanced `
+  --content-filter-mode medium `
+  --ollama `
+  --ollama-model qwen2.5:7b `
+  --ollama-num-ctx 12000 `
+  --ollama-num-predict 1800 `
   --chunk-size 8000 `
   --chunk-overlap 150
 ```
 ---
-17. Как читать скорость обработки
-    В логах скрипт выводит примерно такие строки:
-```text
-faster-whisper завершил транскрибацию за 320.45 сек; скорость: 1.87x realtime
-```
-`1.87x realtime` означает, что аудио обработано примерно в 1.87 раза быстрее его длительности.
-Пример:
-запись длится 60 минут;
-скорость `2.00x realtime`;
-транскрибация заняла примерно 30 минут.
-В `manifest.json` скорость сохраняется в поле:
-```json
-"timings_seconds": {
-  "realtime_factor": 1.87
-}
-```
+12. Основные параметры
+    12.1. Faster-whisper
+    Параметр	Значение по умолчанию	Назначение
+    `--model`	`small`	Модель распознавания
+    `--device`	`cpu`	Устройство: `cpu`, `cuda`, `auto`
+    `--compute-type`	`int8`	Тип вычислений CTranslate2
+    `--cpu-threads`	логические ядра минус 1	Количество CPU-потоков
+    `--num-workers`	`1`	Worker'ы faster-whisper
+    `--language`	`ru`	Язык речи
+    `--beam-size`	`1`	Скорость/точность декодирования
+    `--vad-filter`	включён	Пропуск участков без речи
+    `--word-timestamps`	выключен	Пословные таймкоды
+    12.2. Аудиоподготовка
+    Параметр	Назначение
+    `--skip-audio-prepare`	Передать исходный файл напрямую в faster-whisper
+    `--audio-filter none`	Подготовить WAV без фильтров
+    `--audio-filter basic`	Highpass/lowpass
+    `--audio-filter loudnorm`	Нормализация громкости, медленнее
+    `--keep-prepared-wav`	Сохранить подготовленный WAV
+    12.3. Очистка и смысловая фильтрация
+    Параметр	Назначение
+    `--clean-mode`	Базовая очистка транскрипта
+    `--content-filter-mode`	Смысловое сокращение перед LLM
+    `--chunk-size`	Размер чанка для LLM
+    `--chunk-overlap`	Перекрытие чанков
+    `--prompt-include-text-limit`	Лимит вставки текста в `04_llm_prompt.md`
+    12.4. Ollama
+    Параметр	Значение по умолчанию	Назначение
+    `--ollama`	выключен	Включить локальную LLM-обработку
+    `--ollama-url`	`http://localhost:11434`	URL Ollama API
+    `--ollama-model`	`qwen2.5:7b`	Модель Ollama
+    `--ollama-timeout`	`900`	Таймаут одного запроса
+    `--ollama-temperature`	`0.1`	Температура генерации
+    `--ollama-num-ctx`	`8192`	Контекст модели
+    `--ollama-num-predict`	`3000`	Максимальная длина ответа
+    `--ollama-keep-alive`	`10m`	Время удержания модели в памяти
+    `--no-ollama-final-synthesis`	выключен	Пропустить финальную сборку протокола
+    `--ollama-final-max-chars`	`45000`	Лимит финального prompt
 ---
-18. Типовые проблемы и решения
-    Ошибка: `ModuleNotFoundError: No module named 'faster_whisper'`
-    Установите пакет:
-```bash
-pip install faster-whisper
-```
-Проверьте, что установка выполнена в том же виртуальном окружении, из которого запускается скрипт.
-Ошибка: `ffmpeg не найден в PATH`
-У вас два варианта.
-Первый — запускать без подготовки аудио:
-```powershell
---skip-audio-prepare
-```
-Второй — установить FFmpeg и добавить его в PATH.
-Скрипт работает слишком медленно
-Попробуйте:
-```powershell
---model small `
---beam-size 1 `
---compute-type int8 `
---skip-audio-prepare
-```
-Также можно уменьшить число потоков, если ноутбук перегревается:
-```powershell
---cpu-threads 4
-```
-Или увеличить, если процессор недогружен:
-```powershell
---cpu-threads 8
-```
-Слишком много мусора в транскрипте
-Попробуйте:
-```powershell
---clean-mode aggressive
-```
-Или включите подготовку аудио:
-```powershell
---audio-filter basic
-```
-Если громкость сильно скачет:
-```powershell
---audio-filter loudnorm
-```
-Очистка удалила слишком много
-Используйте более бережный режим:
-```powershell
---clean-mode conservative
-```
-Ollama работает слишком долго
-Отключите финальную сборку:
-```powershell
---no-ollama-final-synthesis
-```
-Сократите ответ модели:
-```powershell
---ollama-num-predict 1200
-```
-Уменьшите перекрытие чанков:
-```powershell
---chunk-overlap 150
-```
-Модель Ollama не найдена
-Проверьте список моделей:
-```bash
-ollama list
-```
-Скачайте нужную:
-```bash
-ollama pull qwen2.5:7b
-```
-Или укажите установленную модель:
-```powershell
---ollama-model llama3.1:8b
-```
----
-19. Практический порядок работы
-    Сначала запустите быстрый режим:
+13. Типовые сценарии
+    13.1. Только транскрипт и очищенный текст
 ```powershell
 python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
   --model small `
@@ -566,104 +410,113 @@ python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
   --beam-size 1 `
   --skip-audio-prepare
 ```
-Откройте файл:
+13.2. Транскрипт для будущего пособия
+```powershell
+python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
+  --model small `
+  --device cpu `
+  --compute-type int8 `
+  --beam-size 1 `
+  --skip-audio-prepare `
+  --clean-mode balanced `
+  --content-filter-mode medium `
+  --chunk-size 7000 `
+  --chunk-overlap 150
+```
+13.3. Полный локальный протокол через Ollama
+```powershell
+python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
+  --model small `
+  --device cpu `
+  --compute-type int8 `
+  --beam-size 1 `
+  --skip-audio-prepare `
+  --clean-mode balanced `
+  --content-filter-mode medium `
+  --ollama `
+  --ollama-model qwen2.5:7b `
+  --ollama-num-ctx 8192 `
+  --ollama-num-predict 1500 `
+  --chunk-size 7000 `
+  --chunk-overlap 150
+```
+---
+14. Диагностика
+    14.1. Модель faster-whisper скачивается с Hugging Face
+    При первом запуске возможны строки вида:
+```text
+HTTP Request: GET https://huggingface.co/...
+Warning: You are sending unauthenticated requests to the HF Hub.
+```
+Это нормальная ситуация первого скачивания модели. После загрузки модель попадёт в кэш Hugging Face.
+14.2. Предупреждение про symlinks на Windows
+Возможен warning:
+```text
+cache-system uses symlinks by default ... your machine does not support them
+```
+Варианты:
+Включить Developer Mode в Windows.
+Запускать терминал от администратора.
+Отключить предупреждение:
+```powershell
+setx HF_HUB_DISABLE_SYMLINKS_WARNING 1
+```
+После `setx` откройте новый PowerShell.
+14.3. ffmpeg найден, ffprobe отсутствует
+Проверьте:
+```powershell
+where ffmpeg
+where ffprobe
+```
+Если команды ничего не выводят, добавьте папку `bin` от ffmpeg в `PATH`.
+14.4. Ollama недоступна
+Проверьте:
+```powershell
+ollama list
+curl http://localhost:11434/api/tags
+```
+Если модель отсутствует:
+```powershell
+ollama pull qwen2.5:7b
+```
+14.5. Ноутбук сильно загружен
+Снизьте число CPU-потоков:
+```powershell
+--cpu-threads 8
+```
+или:
+```powershell
+--cpu-threads 10
+```
+14.6. Транскрипт слишком сильно сокращён
+Используйте более мягкий режим:
+```powershell
+--content-filter-mode safe
+```
+Или отключите смысловую фильтрацию:
+```powershell
+--content-filter-mode off
+```
+14.7. В протоколе потерялись важные реплики ученика
+Проверьте файл:
+```text
+important_student_signals.json
+```
+Затем сверяйтесь с:
 ```text
 02_clean_balanced.txt
 ```
-Если качество нормальное, используйте:
-```text
-04_llm_prompt.md
-```
-или чанки из:
-```text
-03_llm_chunks/
-```
-Если качество плохое, повторите с одним из вариантов:
-```powershell
---model medium
-```
-или:
-```powershell
---audio-filter basic
-```
-или:
-```powershell
---clean-mode conservative
-```
-Если нужен автоматический протокол, добавьте Ollama:
-```powershell
---ollama --no-ollama-final-synthesis
-```
 ---
-20. Рекомендуемые настройки для ноутбука без NVIDIA и с 32 ГБ RAM
-    Базовый вариант:
-```powershell
---model small
---device cpu
---compute-type int8
---beam-size 1
---skip-audio-prepare
---clean-mode balanced
-```
-Качественный вариант:
-```powershell
---model medium
---device cpu
---compute-type int8
---beam-size 2
---skip-audio-prepare
---clean-mode conservative
-```
-Вариант для проблемного звука:
-```powershell
---model small
---device cpu
---compute-type int8
---beam-size 1
---audio-filter basic
---clean-mode balanced
-```
----
-21. Краткая справка по аргументам
-```text
-input_dir                         Папка с аудиофайлами
---model                          Модель faster-whisper
---device                         cpu / cuda / auto
---compute-type                   int8 / float16 / int8_float16 и др.
---cpu-threads                    Число CPU-потоков
---num-workers                    Число worker'ов faster-whisper
---language                       Язык речи, по умолчанию ru
---beam-size                      Beam search, по умолчанию 1
---vad-filter / --no-vad-filter   Включить или отключить VAD
---vad-min-silence-duration-ms    Минимальная тишина для VAD
---vad-speech-pad-ms              Отступ вокруг речи для VAD
---word-timestamps                Пословные таймкоды
---skip-audio-prepare             Не готовить WAV через ffmpeg
---audio-filter                   none / basic / loudnorm
---clean-mode                     conservative / balanced / aggressive
---chunk-size                     Размер чанка для LLM
---chunk-overlap                  Перекрытие чанков
---prompt-include-text-limit      Лимит вставки текста в 04_llm_prompt.md
---initial-prompt                 Начальная подсказка для Whisper
---condition-on-previous-text     Связывать распознавание с предыдущим текстом
---keep-prepared-wav              Сохранять подготовленный WAV
---recursive                      Искать файлы во вложенных папках
---verbose                        Подробный лог
---ollama                         Включить Ollama-обработку
---ollama-url                     URL Ollama API
---ollama-model                   Модель Ollama
---ollama-timeout                 Таймаут запроса к Ollama
---ollama-temperature             Температура Ollama
---ollama-num-ctx                 Контекст Ollama
---ollama-num-predict             Максимум генерируемых токенов
---ollama-keep-alive              Время удержания модели в памяти
---no-ollama-final-synthesis      Не собирать итоговый протокол
---ollama-final-max-chars         Лимит размера финального prompt
-```
----
-22. Минимальный `.gitignore`
-    Рекомендуется не коммитить результаты обработки и большие аудиофайлы:
+15. Рекомендованный .gitignore
 ```gitignore
+.venv/
+__pycache__/
+*.pyc
+
+*_lesson_transcript/
+input/audio/
+output/
+
 *.mp3
 *.wav
 *.m4a
@@ -671,21 +524,58 @@ input_dir                         Папка с аудиофайлами
 *.ogg
 *.aac
 *.wma
-*_lesson_transcript/
-__pycache__/
-.venv/
-venv/
 ```
+Если аудиофайлы должны храниться в репозитории, уберите аудио-расширения из `.gitignore`.
 ---
-23. Минимальный `requirements.txt`
+16. Рекомендуемый дальнейший конвейер
+    После текущего скрипта следующий инженерный шаг — создать единый учебный JSON:
 ```text
-faster-whisper
+03_content_only_medium.txt
+  → lesson_protocol.md
+  → lesson_spec.json
+  → main.tex
+  → main.pdf
+  → index.html
 ```
-Если проект использует дополнительные инструменты, добавьте их отдельно.
+Идеальная схема:
+```text
+аудио
+  → faster-whisper
+  → cleaned transcript
+  → content-only transcript
+  → lesson protocol
+  → lesson_spec.json
+  → LaTeX-пособие
+  → web-пособие
+```
+`lesson_spec.json` должен стать единым источником содержания для PDF и web-версии.
 ---
-24. Назначение файлов в рабочем процессе преподавателя
-    После обработки занятия обычно используются три файла:
-    `02_clean_balanced.txt` — быстрая проверка очищенного транскрипта.
-    `04_llm_prompt.md` — готовая заготовка для создания учебного протокола.
-    `03_llm_chunks/` — фрагменты для последовательной обработки большой записи.
-    Для последующего создания персонального пособия лучше опираться не только на итоговый LLM-протокол, но и на сырой файл с таймкодами `00_raw_timestamped.txt`, особенно если в занятии были важные ошибки ученика или неразборчивые формулы.
+17. Короткая памятка
+    Для обычной работы используйте:
+```powershell
+python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
+  --model small `
+  --device cpu `
+  --compute-type int8 `
+  --beam-size 1 `
+  --skip-audio-prepare `
+  --clean-mode balanced `
+  --content-filter-mode medium
+```
+Для локального протокола через Ollama:
+```powershell
+python audio_lesson_transcriber_faster.py "C:\audio_lessons" `
+  --model small `
+  --device cpu `
+  --compute-type int8 `
+  --beam-size 1 `
+  --skip-audio-prepare `
+  --clean-mode balanced `
+  --content-filter-mode medium `
+  --ollama `
+  --ollama-model qwen2.5:7b `
+  --no-ollama-final-synthesis `
+  --ollama-num-predict 1200 `
+  --chunk-size 7000 `
+  --chunk-overlap 150
+```
