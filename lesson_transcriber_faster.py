@@ -1282,6 +1282,30 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("input_dir", type=str, help="Путь к папке с аудиофайлами.")
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help=(
+            "Короткий CPU-профиль: model=small, device=cpu, compute_type=int8, "
+            "beam_size=1, skip_audio_prepare=True, clean_mode=balanced, content_filter_mode=medium."
+        ),
+    )
+    parser.add_argument(
+        "--llm",
+        action="store_true",
+        help=(
+            "Короткий профиль: --fast плюс Ollama-обработка чанков через qwen2.5:7b "
+            "без финальной сборки единого протокола."
+        ),
+    )
+    parser.add_argument(
+        "--llm-final",
+        action="store_true",
+        help=(
+            "Короткий профиль: --fast плюс Ollama-обработка чанков через qwen2.5:7b "
+            "с финальной сборкой 06_ollama_final_protocol.md."
+        ),
+    )
     parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help="Модель faster-whisper: tiny, base, small, medium, large-v3 или путь к модели.")
     parser.add_argument("--device", type=str, choices=["cpu", "cuda", "auto"], default="cpu", help="Устройство для faster-whisper.")
     parser.add_argument("--compute-type", type=str, default="int8", help="Тип вычислений CTranslate2. Для CPU рекомендуется int8.")
@@ -1324,8 +1348,43 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def apply_short_launch_profiles(args: argparse.Namespace) -> None:
+    """Применяет короткие профили запуска поверх argparse-значений.
+
+    --fast задаёт быстрый CPU-профиль транскрибации.
+    --llm включает --fast и Ollama-обработку чанков без финальной сборки.
+    --llm-final включает --fast и Ollama-обработку с финальной сборкой.
+    """
+
+    if args.llm or args.llm_final:
+        args.fast = True
+
+    if args.fast:
+        args.model = "small"
+        args.device = "cpu"
+        args.compute_type = "int8"
+        args.beam_size = 1
+        args.skip_audio_prepare = True
+        args.clean_mode = "balanced"
+        args.content_filter_mode = "medium"
+
+    if args.llm or args.llm_final:
+        args.ollama = True
+        args.ollama_model = "qwen2.5:7b"
+        args.ollama_num_predict = 1200
+        args.chunk_size = 7000
+        args.chunk_overlap = 150
+
+    if args.llm:
+        args.no_ollama_final_synthesis = True
+
+    if args.llm_final:
+        args.no_ollama_final_synthesis = False
+
+
 def main() -> None:
     args = parse_args()
+    apply_short_launch_profiles(args)
     setup_logging(verbose=args.verbose)
 
     input_dir = Path(args.input_dir)
